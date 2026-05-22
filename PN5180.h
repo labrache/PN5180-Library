@@ -21,6 +21,15 @@
 
 #include <SPI.h>
 
+// Maximum time (in milliseconds) to wait for an IRQ flag or a BUSY edge.
+// If the condition is not met within this window the waiting function returns
+// an error instead of blocking forever.  Override before including this header:
+//   #define PN5180_TIMEOUT_MS 200
+//   #include "PN5180.h"
+#ifndef PN5180_TIMEOUT_MS
+#define PN5180_TIMEOUT_MS 100
+#endif
+
 // PN5180 Registers
 #define SYSTEM_CONFIG       (0x00)
 #define IRQ_ENABLE          (0x01)
