@@ -23,8 +23,42 @@
 #include <PN5180.h>
 #include "Debug.h"
 
-PN5180ISO14443::PN5180ISO14443(uint8_t SSpin, uint8_t BUSYpin, uint8_t RSTpin) 
+PN5180ISO14443::PN5180ISO14443(uint8_t SSpin, uint8_t BUSYpin, uint8_t RSTpin)
               : PN5180(SSpin, BUSYpin, RSTpin) {
+}
+
+/*
+ * waitRxAndRead - private helper, call immediately after sendData().
+ *
+ * Mirrors the ISO15693 reception model (PN5180ISO15693::issueISO15693Command):
+ *   1. Short delay so the card has time to start its response.
+ *   2. Check RX_SOF_DET_IRQ_STAT — early exit when no card is in field.
+ *   3. Bounded wait for RX_IRQ_STAT (complete frame received).
+ *   4. readData() into caller-supplied buffer.
+ *   5. clearIRQStatus() — leave chip in clean state.
+ *
+ * ISO14443-A at 106 kbps: FDT ~86 µs + ATQA ~151 µs → response done < 1 ms.
+ */
+bool PN5180ISO14443::waitRxAndRead(uint8_t *buffer, uint8_t len) {
+  delay(1);  // allow card to begin responding
+  uint32_t status = getIRQStatus();
+  if (0 == (status & RX_SOF_DET_IRQ_STAT)) {
+    // No SOF detected: no card, or card left the field
+    clearIRQStatus(TX_IRQ_STAT | IDLE_IRQ_STAT);
+    return false;
+  }
+  unsigned long start = millis();
+  while (0 == (status & RX_IRQ_STAT)) {
+    if (millis() - start > PN5180_TIMEOUT_MS) {
+      clearIRQStatus(TX_IRQ_STAT | IDLE_IRQ_STAT | RX_SOF_DET_IRQ_STAT);
+      return false;
+    }
+    delay(1);
+    status = getIRQStatus();
+  }
+  if (!readData(len, buffer)) return false;
+  clearIRQStatus(RX_SOF_DET_IRQ_STAT | TX_IRQ_STAT | RX_IRQ_STAT | IDLE_IRQ_STAT);
+  return true;
 }
 
 bool PN5180ISO14443::setupRF() {
@@ -85,30 +119,30 @@ uint8_t PN5180ISO14443::activateTypeA(uint8_t *buffer, uint8_t kind) {
 	cmd[0] = (kind == 0) ? 0x26 : 0x52;
 	if (!sendData(cmd, 1, 0x07))
 	  return 0;
-	// READ 2 bytes ATQA into  buffer
-	if (!readData(2, buffer)) 
+	// READ 2 bytes ATQA into buffer — wait for card response
+	if (!waitRxAndRead(buffer, 2))
 	  return 0;
 	//Send Anti collision 1, 8 bits in last byte
 	cmd[0] = 0x93;
 	cmd[1] = 0x20;
 	if (!sendData(cmd, 2, 0x00))
 	  return 0;
-	//Read 5 bytes, we will store at offset 2 for later usage
-	if (!readData(5, cmd+2)) 
+	//Read 5 bytes, we will store at offset 2 for later usage — wait for card response
+	if (!waitRxAndRead(cmd+2, 5))
 	  return 0;
 	//Enable RX CRC calculation
-	if (!writeRegisterWithOrMask(CRC_RX_CONFIG, 0x01)) 
+	if (!writeRegisterWithOrMask(CRC_RX_CONFIG, 0x01))
 	  return 0;
 	//Enable TX CRC calculation
-	if (!writeRegisterWithOrMask(CRC_TX_CONFIG, 0x01)) 
+	if (!writeRegisterWithOrMask(CRC_TX_CONFIG, 0x01))
 	  return 0;
 	//Send Select anti collision 1, the remaining bytes are already in offset 2 onwards
 	cmd[0] = 0x93;
 	cmd[1] = 0x70;
-	if (!sendData(cmd, 7, 0x00)) 
+	if (!sendData(cmd, 7, 0x00))
 	  return 0;
-	//Read 1 byte SAK into buffer[2]
-	if (!readData(1, buffer+2)) 
+	//Read 1 byte SAK into buffer[2] — wait for card response
+	if (!waitRxAndRead(buffer+2, 1))
 	  return 0;
 	// Check if the tag is 4 Byte UID or 7 byte UID and requires anti collision 2
 	// If Bit 3 is 0 it is 4 Byte UID
@@ -131,29 +165,29 @@ uint8_t PN5180ISO14443::activateTypeA(uint8_t *buffer, uint8_t kind) {
 		// Do anti collision 2
 		cmd[0] = 0x95;
 		cmd[1] = 0x20;
-		if (!sendData(cmd, 2, 0x00)) 
+		if (!sendData(cmd, 2, 0x00))
 	      return 0;
-		//Read 5 bytes. we will store at offset 2 for later use
-		if (!readData(5, cmd+2)) 
+		//Read 5 bytes. we will store at offset 2 for later use — wait for card response
+		if (!waitRxAndRead(cmd+2, 5))
 	      return 0;
 		// first 4 bytes belongs to last 4 UID bytes, we keep it.
 		for (int i = 0; i < 4; i++) {
 		  buffer[6 + i] = cmd[2+i];
 		}
 		//Enable RX CRC calculation
-		if (!writeRegisterWithOrMask(CRC_RX_CONFIG, 0x01)) 
+		if (!writeRegisterWithOrMask(CRC_RX_CONFIG, 0x01))
 	      return 0;
 		//Enable TX CRC calculation
-		if (!writeRegisterWithOrMask(CRC_TX_CONFIG, 0x01)) 
+		if (!writeRegisterWithOrMask(CRC_TX_CONFIG, 0x01))
 	      return 0;
-		//Send Select anti collision 2 
+		//Send Select anti collision 2
 		cmd[0] = 0x95;
 		cmd[1] = 0x70;
-		if (!sendData(cmd, 7, 0x00)) 
+		if (!sendData(cmd, 7, 0x00))
 	      return 0;
-		//Read 1 byte SAK into buffer[2]
-		if (!readData(1, buffer + 2)) 
-	      return 0;	
+		//Read 1 byte SAK into buffer[2] — wait for card response
+		if (!waitRxAndRead(buffer + 2, 1))
+	      return 0;
 		uidLength = 7;
 	}
     return uidLength;

@@ -303,6 +303,12 @@ bool PN5180::sendData(uint8_t *data, int len, uint8_t validBits) {
     buffer[2+i] = data[i];
   }
 
+  // Clear all IRQ flags before starting a new transceive cycle.
+  // The PN5180's IRQ_STATUS bits are sticky and must be explicitly cleared;
+  // accumulated flags from previous exchanges prevent the transceiver state
+  // machine from reaching WaitTransmit, which breaks repeated reads.
+  clearIRQStatus(0xFFFFFFFF);
+
   writeRegisterWithAndMask(SYSTEM_CONFIG, 0xfffffff8);  // Idle/StopCom Command
   writeRegisterWithOrMask(SYSTEM_CONFIG, 0x00000003);   // Transceive Command
   /*
