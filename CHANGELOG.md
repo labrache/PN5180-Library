@@ -4,6 +4,55 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.1.0] — 2026-05-22
+
+### Problem solved
+ISO14443 reads stopped working after 2–3 detections in continuous mode
+(loop: `setupRF()` → `readCardSerial()` → `setRF_off()`) with no reset in
+between.  The loop kept running (no freeze, thanks to v2.0.0 timeouts) but
+every card returned 0.
+
+Two co-operating root causes:
+
+1. **Sticky IRQ flags**: the PN5180's `IRQ_STATUS` register bits remain set
+   until explicitly cleared via `clearIRQStatus()`.  `activateTypeA()` never
+   called it; after a few cycles the accumulated flags prevented the transceive
+   state machine from reaching `WaitTransmit` → `sendData()` returned false →
+   no detection.  (ISO15693 and iClass already cleared flags; the bug was
+   ISO14443-specific.)
+
+2. **Race-free reads**: `activateTypeA()` called `readData()` immediately after
+   `sendData()` with no handshake, reading whatever was in the RX buffer before
+   the card had finished responding.
+
+### Added
+- `PN5180ISO14443::waitRxAndRead(buffer, len)` — private helper that mirrors
+  the ISO15693 reception model:
+  - 1 ms initial delay (ISO14443-A FDT + ATQA ≈ 300 µs, well within 1 ms)
+  - Check `RX_SOF_DET_IRQ_STAT` for fast "no card" exit
+  - Bounded wait for `RX_IRQ_STAT` (uses `PN5180_TIMEOUT_MS`)
+  - `readData(len, buffer)`
+  - `clearIRQStatus(RX_SOF_DET|TX|RX|IDLE)` — always leaves chip clean
+
+### Changed
+- `PN5180::sendData()` — calls `clearIRQStatus(0xFFFFFFFF)` before the
+  `SYSTEM_CONFIG` Idle/Transceive sequence.  This is the universal fix: every
+  protocol (ISO14443, ISO15693, iClass, FeliCa) now starts each command with a
+  clean IRQ state.  ISO15693 and iClass are unaffected because they already
+  cleared flags independently after their receives.
+- `PN5180ISO14443::activateTypeA()` — all five `readData()` calls replaced
+  with `waitRxAndRead()` (ATQA, anti-collision ×2, SAK ×2 in the 7-byte path).
+
+### Compatibility
+- No public API changes.
+- No new dependencies.
+- ISO15693 and iClass non-regression: `clearIRQStatus` in `sendData` fires
+  *before* the command is sent; the IRQ flags checked by those protocols
+  (`RX_SOF_DET_IRQ_STAT`, `RX_IRQ_STAT`) are set *after* the command is sent
+  (by the card's response), so the extra clear does not interfere.
+
+---
+
 ## [2.0.0] — 2026-05-22
 
 ### Problem solved
