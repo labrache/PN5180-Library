@@ -28,6 +28,11 @@ public:
   
 private:
   uint16_t rxBytesReceived();
+  // Wait for a complete ISO14443 card response then read `len` bytes into
+  // `buffer`.  Mirrors the ISO15693 reception model: checks RX_SOF_DET_IRQ,
+  // waits for RX_IRQ_STAT (bounded by PN5180_TIMEOUT_MS), reads data, clears
+  // IRQ flags.  Returns false if no card responded or on timeout.
+  bool waitRxAndRead(uint8_t *buffer, uint8_t len);
 public:
   // Mifare TypeA
   uint8_t activateTypeA(uint8_t *buffer, uint8_t kind);
