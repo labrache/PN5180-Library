@@ -1,11 +1,60 @@
 # PN5180-Library
 
-Arduino Uno / Arduino ESP-32 library for PN5180-NFC Module from NXP Semiconductors
+Arduino library for the NXP PN5180 NFC/RFID module.  
+Supports ISO15693, ISO14443 (MIFARE), FeliCa, and iClass protocols.  
+Compatible with **all Arduino architectures** (`architectures=*`), including
+AVR, ESP32, and RP2350 (Raspberry Pi Pico 2 with the arduino-pico core).
 
 ![PN5180-NFC module](./doc/PN5180-NFC.png)
 ![PN5180 Schematics](./doc/FritzingLayout.jpg)
 
+---
+
+## Timeout protection (v2.0.0)
+
+All internal wait loops are now guarded against infinite blocking.  If the
+PN5180 misses an IRQ flag or a BUSY edge (which can happen when a tag loads the
+RF antenna), the affected function returns an error code after at most
+`PN5180_TIMEOUT_MS` milliseconds instead of freezing the firmware forever.
+
+The default timeout is **100 ms**.  You can override it globally by defining
+the macro **before** including any library header:
+
+```cpp
+#define PN5180_TIMEOUT_MS 200   // use 200 ms instead
+#include "PN5180ISO14443.h"
+```
+
+### Recommended continuous-reading pattern
+
+Cycle the RF field on every iteration to reset any stuck tag/IRQ state:
+
+```cpp
+void loop() {
+  if (!nfc.setupRF()) { delay(200); return; }   // RF on + configure
+
+  uint8_t uid[7];
+  uint8_t len = nfc.readCardSerial(uid);         // read tag (or timeout)
+  if (len >= 4) { /* process uid */ }
+
+  if (!nfc.setRF_off()) { nfc.reset(); }         // RF off; reset on error
+
+  delay(300);
+}
+```
+
+See `examples/ISO14443Continuous/` for a fully commented sketch.
+
+---
+
 Release Notes:
+
+Version 2.0.0 - 22.05.2026
+
+  * Timeout protection for all blocking IRQ/BUSY wait loops (PN5180_TIMEOUT_MS).
+  * New example: examples/ISO14443Continuous/ (robust continuous ISO14443 reading).
+  * Return-value propagation for transceiveCommand() and all callers.
+  * See CHANGELOG.md for full details.
 
 Version 1.8.1 - 19.08.2021
 
